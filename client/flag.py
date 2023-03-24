@@ -1,4 +1,6 @@
 CONN_INITOK = b'\x00'
+CONN_KEYSEND = b'\x01'
+CONN_KEYRECV = b'\x02'
 CONN_CLOSE = b'\x1f'
 ACON_OK = b'\x20'
 ACON_FAL = b'\x3f'
