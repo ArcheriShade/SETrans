@@ -1,4 +1,6 @@
 import sys
+import re
+import pymysql
 from socketserver import BaseRequestHandler, ThreadingTCPServer
 from Crypto.PublicKey import RSA
 from Crypto.Random import get_random_bytes
@@ -10,6 +12,12 @@ from flag import *
 
 SERVER_ADDR = ("10.10.10.1", 7777)      # 服务器地址
 CHUNK_SIZE = 1024                       # 传输数据块大小
+DB_HOST = "10.10.10.1"                  # 数据库地址
+DB_PORT = 3306                          # 数据库端口
+DB_USER = "root"                        # 数据库用户
+DB_PASSWORD = "toor"                    # 数据库密码
+DB_DATABASE = "SETrans"                 # 数据库名称
+DB_CHARSET = "utf8mb4"                  # 数据库编码集
 
 
 class ClientHandler(BaseRequestHandler):
@@ -59,13 +67,37 @@ class ClientHandler(BaseRequestHandler):
         """
         while True:
             cipher_data = self.c_socket.recv(CHUNK_SIZE)
-            cipher_data_len = len(cipher_data)
-            if cipher_data_len < 33:
+            data = self.decryptData(cipher_data)
+            if data == -1:
                 self.sendError()
                 return -1
 
-            data = self.decryptData(cipher_data)
-            code = data[0]
+            code = data[0].to_bytes(1, 'big')
+            if code == ACON_SIGN:
+                username, password = self.aconInputCheck(data[1:])
+                if len(username) > 0 and len(password) > 0:
+                    if self.signUp(username, password) < 0:
+                        cipher_data = self.encryptData(ACON_NEXIS)
+                        self.c_socket.send(cipher_data)
+                    else:
+                        cipher_data = self.encryptData(ACON_OK)
+                        self.c_socket.send(cipher_data)
+                else:
+                    cipher_data = self.encryptData(ACON_FMATERR)
+                    self.c_socket.send(cipher_data)
+
+            elif code == ACON_LOGIN:
+                username, password = self.aconInputCheck(data[1:])
+                if len(username) > 0 and len(password) > 0:
+                    if self.login(username, password) < 0:
+                        cipher_data = self.encryptData(ACON_NPERR)
+                        self.c_socket.send(cipher_data)
+                    else:
+                        cipher_data = self.encryptData(ACON_OK)
+                        self.c_socket.send(cipher_data)
+                else:
+                    cipher_data = self.encryptData(ACON_FMATERR)
+                    self.c_socket.send(cipher_data)
 
             ##############################
 
@@ -73,18 +105,28 @@ class ClientHandler(BaseRequestHandler):
         """
         对数据进行可校验加密
         """
-        cipher = AES.new(sess_key, AES.MODE_EAX)
+        cipher = AES.new(self.sess_key, AES.MODE_EAX)
         enc_data, tag = cipher.encrypt_and_digest(data)
         cipher_data = cipher.nonce + tag + enc_data
         return cipher_data
 
     def decryptData(self, cipher_data):
         """
-        对加密数据进行解密并校验
+        对加密数据进行长度判断、解密并校验
         """
+        # 判断长度
+        cipher_data_len = len(cipher_data)
+        if cipher_data_len < 33:
+            return -1
+
+        # 解密并校验
         nonce, tag, enc_data = cipher_data[:16], cipher_data[16:32], cipher_data[32:]
         cipher = AES.new(self.sess_key, AES.MODE_EAX, nonce)
-        data = cipher.decrypt_and_verify(enc_data, tag)
+        try:
+            data = cipher.decrypt_and_verify(enc_data, tag)
+        except ValueError as e:
+            return -1
+
         return data
 
     def sendError(self):
@@ -95,8 +137,85 @@ class ClientHandler(BaseRequestHandler):
         self.c_socket.send(cipher_data)
         return -1
 
+    def aconInputCheck(self, acon_input):
+        """
+        检查用户名与密码输入
+        """
+        data = acon_input.decode().split("/")
+        if len(data) != 2:
+            return "", ""
+        else:
+            name, psw = data[0], data[1]
+            name_check = re.match(r"^[a-zA-Z0-9_-]{4,16}$", name)
+            psw_check = re.match(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[a-zA-Z\d]{8,16}$", psw)
+            if name_check and psw_check:
+                print(name, psw) #【】
+                return name, psw
+            else:
+                print(name, psw) #【】
+                return "", ""
+
+    def signUp(self, name, psw):
+        """
+        将用户名和密码写入数据库，密码加盐存储，预编译执行SQL
+        """
+        global db_handler
+        global db_cur
+
+        # 判断用户是否存在
+        sql = "SELECT * FROM user WHERE username=%s;"
+        if db_cur.execute(sql, (name)):
+            return -1
+        else:
+            salt = get_random_bytes(64)
+            with open("./keys/saltlist", 'a') as file_obj:
+                file_obj.write(name + ":" + salt.hex() + "\n")
+            psw_hash = SHA256.new(psw.encode() + salt).hexdigest()
+            sql = "INSERT INTO user(username, usertype, password) VALUES(%s, %s, %s);"
+            db_cur.execute(sql, (name, "normal", psw_hash))
+            db_handler.commit()
+            return 0
+
+    def login(self, name, psw):
+        """
+        用户登录，取对应盐值计算密码hash，预编译执行SQL
+        """
+        global db_handler
+        global db_cur
+
+        # 获取用户的盐值
+        salt = b""
+        with open("./keys/saltlist", 'r') as file_obj:
+            line = file_obj.readline()
+            while line:
+                if not line.startswith(name + ":"):
+                    line = file_obj.readline()
+                    continue
+                else:
+                    salt = bytes.fromhex(line.split(":")[1].strip())
+                    break
+
+        # 尝试匹配
+        psw_hash = SHA256.new(psw.encode() + salt).hexdigest()
+        sql = "SELECT * FROM user WHERE username=%s and password=%s;"
+        if db_cur.execute(sql, (name, psw_hash)):
+            return 0
+        else:
+            return -1
+
 
 if __name__ == "__main__":
+    # 建立服务器连接句柄及操作游标
+    db_handler = pymysql.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        database=DB_DATABASE,
+        charset=DB_CHARSET
+    )
+    db_cur = db_handler.cursor()
+
     # server对每一个client建立TCP连接
     server = ThreadingTCPServer(SERVER_ADDR, ClientHandler)
     server.serve_forever()

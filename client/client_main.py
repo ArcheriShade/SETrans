@@ -63,8 +63,8 @@ class CLoginWidget(QWidget):
         try:
             pkcs1_15.new(s_pub_key).verify(digest, signature)
         except ValueError as e:
-            self.ui.text_browser.setText("Failed to establish a secure channel.")
             c_socket.send(CONN_CLOSE)
+            self.ui.text_browser.setText("Failed to establish a secure channel.")
             c_socket.close()
             return -1
         else:
@@ -83,7 +83,7 @@ class CLoginWidget(QWidget):
         username = self.ui.editline_user.text().strip()
         password = self.ui.editline_pwd.text().strip()
         if len(username) == 0 or len(password) == 0:
-            info = "Username or password cannot be empty."
+            self.ui.text_browser.setText("Username or password cannot be empty.")
             return -1
 
         # 加密数据并发送
@@ -91,15 +91,72 @@ class CLoginWidget(QWidget):
         cipher_data = self.encryptData(data)
         c_socket.send(cipher_data)
 
-
-        ################################
-
-
-        self.ui.text_browser.setText(info)
-        self.ui.editline_pwd.clear()
+        # 接收服务端响应
+        cipher_data = c_socket.recv(CHUNK_SIZE)
+        data = self.decryptData(cipher_data)
+        if data == -1:
+            self.sessBroken()
+            return -1
+        code = data[0].to_bytes(1, 'big')
+        if code == ACON_OK:
+            self.ui.text_browser.setText("Registration succeeded.")
+            self.ui.editline_pwd.clear()
+            return 0
+        elif code == ACON_FMATERR:
+            self.ui.text_browser.setText("Username or password format error.")
+            self.ui.editline_pwd.clear()
+            return -1
+        elif code == ACON_NEXIS:
+            self.ui.text_browser.setText("Username already exists.")
+            self.ui.editline_pwd.clear()
+            return -1
+        else:
+            self.ui.text_browser.setText("Registration failed.")
+            self.ui.editline_pwd.clear()
+            return -1
 
     def login(self):
-        pass
+        """
+        用户登录
+        """
+        global c_socket
+        global sess_key
+
+        # 只进行简单的非空校验
+        username = self.ui.editline_user.text().strip()
+        password = self.ui.editline_pwd.text().strip()
+        if len(username) == 0 or len(password) == 0:
+            self.ui.text_browser.setText("Username or password cannot be empty.")
+            return -1
+
+        # 加密数据并发送
+        data = ACON_LOGIN + f"{username}/{password}".encode()
+        cipher_data = self.encryptData(data)
+        c_socket.send(cipher_data)
+
+        # 接收服务端响应
+        cipher_data = c_socket.recv(CHUNK_SIZE)
+        data = self.decryptData(cipher_data)
+        if data == -1:
+            self.sessBroken()
+            return -1
+        code = data[0].to_bytes(1, 'big')
+        if code == ACON_OK:
+            self.ui.text_browser.setText("Login succeeded.")
+            self.ui.editline_pwd.clear()
+            return 0
+        elif code == ACON_FMATERR:
+            self.ui.text_browser.setText("Username or password format error.")
+            self.ui.editline_pwd.clear()
+            return -1
+        elif code == ACON_NPERR:
+            self.ui.text_browser.setText("Username or password error.")
+            self.ui.editline_pwd.clear()
+            return -1
+        else:
+            self.ui.text_browser.setText("Login failed.")
+            self.ui.editline_pwd.clear()
+            return -1
 
     def encryptData(self, data):
         """
@@ -111,6 +168,39 @@ class CLoginWidget(QWidget):
         enc_data, tag = cipher.encrypt_and_digest(data)
         cipher_data = cipher.nonce + tag + enc_data
         return cipher_data
+
+    def decryptData(self, cipher_data):
+        """
+        对加密数据进行长度判断、解密并校验
+        """
+        global c_socket
+        global sess_key
+        # 判断长度
+        cipher_data_len = len(cipher_data)
+        if cipher_data_len < 33:
+            return -1
+
+        # 解密并校验
+        nonce, tag, enc_data = cipher_data[:16], cipher_data[16:32], cipher_data[32:]
+        cipher = AES.new(sess_key, AES.MODE_EAX, nonce)
+        try:
+            data = cipher.decrypt_and_verify(enc_data, tag)
+        except ValueError as e:
+            return -1
+
+        return data
+
+    def sessBroken(self):
+        """
+        安全信道破损，关闭连接
+        """
+        global c_socket
+        global flag_broken
+        c_socket.close()
+        self.ui.text_browser.setText("Security channel is broken.")
+        self.ui.button_login.setDisabled(True)
+        self.ui.button_signup.setDisabled(True)
+        flag_broken = 1
 
     # def recvData(self):
     #     """
@@ -135,10 +225,15 @@ if __name__ == '__main__':
     c_socket = None
     sess_key = b''
 
+    # 信道状态标志
+    flag_broken = 0
+
     login_window = CLoginWidget()
     login_window.show()
 
     app.exec()
 
-    c_socket.close()
+    if flag_broken == 0:
+        c_socket.close()
+
     sys.exit()
