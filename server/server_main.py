@@ -1,7 +1,10 @@
-import sys
+import os
 import re
+import sys
+import json
 import pymysql
 from socketserver import BaseRequestHandler, ThreadingTCPServer
+
 from Crypto.PublicKey import RSA
 from Crypto.Random import get_random_bytes
 from Crypto.Cipher import AES, PKCS1_OAEP
@@ -22,9 +25,11 @@ DB_CHARSET = "utf8mb4"                  # 数据库编码集
 
 class ClientHandler(BaseRequestHandler):
     def handle(self):
-        # 每个client的连接句柄以及会话密钥
+        global db_handler
+        # 每个client的连接句柄、会话密钥以及数据库游标
         self.c_socket = self.request
         self.sess_key = get_random_bytes(16)
+        self.db_cur = db_handler.cursor()
         # 建立安全信道
         if self.seSessInit() == 0:
             # 接收命令
@@ -160,11 +165,9 @@ class ClientHandler(BaseRequestHandler):
         将用户名和密码写入数据库，密码加盐存储，预编译执行SQL
         """
         global db_handler
-        global db_cur
-
         # 判断用户是否存在
         sql = "SELECT * FROM user WHERE username=%s;"
-        if db_cur.execute(sql, (name)):
+        if self.db_cur.execute(sql, (name)):
             return -1
         else:
             salt = get_random_bytes(64)
@@ -172,7 +175,7 @@ class ClientHandler(BaseRequestHandler):
                 file_obj.write(name + ":" + salt.hex() + "\n")
             psw_hash = SHA256.new(psw.encode() + salt).hexdigest()
             sql = "INSERT INTO user(username, usertype, password) VALUES(%s, %s, %s);"
-            db_cur.execute(sql, (name, "normal", psw_hash))
+            self.db_cur.execute(sql, (name, "normal", psw_hash))
             db_handler.commit()
             return 0
 
@@ -181,8 +184,6 @@ class ClientHandler(BaseRequestHandler):
         用户登录，取对应盐值计算密码hash，预编译执行SQL
         """
         global db_handler
-        global db_cur
-
         # 获取用户的盐值
         salt = b""
         with open("./keys/saltlist", 'r') as file_obj:
@@ -198,7 +199,7 @@ class ClientHandler(BaseRequestHandler):
         # 尝试匹配
         psw_hash = SHA256.new(psw.encode() + salt).hexdigest()
         sql = "SELECT * FROM user WHERE username=%s and password=%s;"
-        if db_cur.execute(sql, (name, psw_hash)):
+        if self.db_cur.execute(sql, (name, psw_hash)):
             return 0
         else:
             return -1
@@ -214,7 +215,6 @@ if __name__ == "__main__":
         database=DB_DATABASE,
         charset=DB_CHARSET
     )
-    db_cur = db_handler.cursor()
 
     # server对每一个client建立TCP连接
     server = ThreadingTCPServer(SERVER_ADDR, ClientHandler)

@@ -1,12 +1,16 @@
 import sys
+import json
 from socket import *
+
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import AES, PKCS1_OAEP
 from Crypto.Signature import pkcs1_15
 from Crypto.Hash import SHA256
 
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QWidget, QAbstractItemView
+from PySide6.QtCore import QStringListModel
 from ui_login import Ui_Login
+from ui_setrans import Ui_SETrans
 
 from flag import *
 
@@ -15,12 +19,13 @@ CHUNK_SIZE = 1024                   # 传输数据大小
 
 
 class CLoginWidget(QWidget):
-    def __init__(self):
+    def __init__(self, main_ui):
         global c_socket
         global sess_key
         super().__init__()
         self.ui = Ui_Login()
         self.ui.setupUi(self)
+        self.main_ui = main_ui
 
         # 绑定button函数
         self.ui.button_signup.clicked.connect(self.signUp)
@@ -77,8 +82,6 @@ class CLoginWidget(QWidget):
         用户注册
         """
         global c_socket
-        global sess_key
-
         # 只进行简单的非空校验
         username = self.ui.editline_user.text().strip()
         password = self.ui.editline_pwd.text().strip()
@@ -120,8 +123,6 @@ class CLoginWidget(QWidget):
         用户登录
         """
         global c_socket
-        global sess_key
-
         # 只进行简单的非空校验
         username = self.ui.editline_user.text().strip()
         password = self.ui.editline_pwd.text().strip()
@@ -143,7 +144,8 @@ class CLoginWidget(QWidget):
         code = data[0].to_bytes(1, 'big')
         if code == ACON_OK:
             self.ui.text_browser.setText("Login succeeded.")
-            self.ui.editline_pwd.clear()
+            self.close()
+            self.main_ui.show()
             return 0
         elif code == ACON_FMATERR:
             self.ui.text_browser.setText("Username or password format error.")
@@ -162,7 +164,6 @@ class CLoginWidget(QWidget):
         """
         对数据进行可校验加密
         """
-        global c_socket
         global sess_key
         cipher = AES.new(sess_key, AES.MODE_EAX)
         enc_data, tag = cipher.encrypt_and_digest(data)
@@ -173,7 +174,6 @@ class CLoginWidget(QWidget):
         """
         对加密数据进行长度判断、解密并校验
         """
-        global c_socket
         global sess_key
         # 判断长度
         cipher_data_len = len(cipher_data)
@@ -202,20 +202,107 @@ class CLoginWidget(QWidget):
         self.ui.button_signup.setDisabled(True)
         flag_broken = 1
 
-    # def recvData(self):
-    #     """
-    #     接收数据
-    #     """
-    #     data = c_socket.recv(CHUNK_SIZE)
-    #     return data
-    #
-    # def testCode(self, data):
-    #     code = data[0].to_bytes(1, 'big')
-    #     if code == ACON_LOGIN:
-    #         self.ui.text_browser.setText("Login OK!")
-    #     else:
-    #         self.ui.text_browser.setText("Oops!")
-    #     c_socket.close()
+
+class CSETransWidget(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.ui = Ui_SETrans()
+        self.ui.setupUi(self)
+
+        # 文件信息列表、已选择文件名称、已选择文件大小
+        self.files_info = []
+        self.selected = ""
+        self.selected_size = 0
+        self.slm = QStringListModel()
+
+        # 绑定button函数
+        self.ui.button_ls.clicked.connect(self.getList)
+        self.ui.button_get.clicked.connect(self.getFile)
+        # 未选择文件禁止get（前端）
+        self.ui.button_get.setDisabled(True)
+        # 禁止双击listView编辑
+        self.ui.list_view.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.ui.list_view.clicked.connect(self.clickList)
+
+    def getList(self):
+        global c_socket
+        ######################
+        # 发送加密的获取列表信号
+        # 获取加密列表的长度
+        # 发送OK
+        # 接收指定长度的加密数据
+        # 解密
+        # 获取列表（文件名+文件大小）
+        # 展示
+        pass
+
+    def getFile(self):
+        global c_socket
+        ######################
+        # 发送加密的获取文件信号+要获取的文件名
+        # 获取加密文件的长度
+        # 发送OK
+        # 接收指定长度的加密数据
+        # 解密
+        # 获取文件
+        # 告知接收完成
+        pass
+
+    def clickList(self, qModelIndex):
+        """
+        选择文件，判断磁盘空间是否足够，相应启用/关闭get button
+        """
+        ###############################
+        pass
+
+    def recvEncData(self, length):
+        """
+        获取指定长度的加密数据
+        """
+        ############################
+        pass
+
+    def encryptData(self, data):
+        """
+        对数据进行可校验加密
+        """
+        global sess_key
+        cipher = AES.new(sess_key, AES.MODE_EAX)
+        enc_data, tag = cipher.encrypt_and_digest(data)
+        cipher_data = cipher.nonce + tag + enc_data
+        return cipher_data
+
+    def decryptData(self, cipher_data):
+        """
+        对加密数据进行长度判断、解密并校验
+        """
+        global sess_key
+        # 判断长度
+        cipher_data_len = len(cipher_data)
+        if cipher_data_len < 33:
+            return -1
+
+        # 解密并校验
+        nonce, tag, enc_data = cipher_data[:16], cipher_data[16:32], cipher_data[32:]
+        cipher = AES.new(sess_key, AES.MODE_EAX, nonce)
+        try:
+            data = cipher.decrypt_and_verify(enc_data, tag)
+        except ValueError as e:
+            return -1
+
+        return data
+
+    def sessBroken(self):
+        """
+        安全信道破损，关闭连接
+        """
+        global c_socket
+        global flag_broken
+        c_socket.close()
+        self.ui.text_browser.setText("Security channel is broken.")
+        self.ui.button_ls.setDisabled(True)
+        self.ui.button_get.setDisabled(True)
+        flag_broken = 1
 
 
 if __name__ == '__main__':
@@ -228,7 +315,8 @@ if __name__ == '__main__':
     # 信道状态标志
     flag_broken = 0
 
-    login_window = CLoginWidget()
+    main_window = CSETransWidget()
+    login_window = CLoginWidget(main_window)
     login_window.show()
 
     app.exec()

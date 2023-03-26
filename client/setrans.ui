@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>SETrans</class>
+ <widget class="QWidget" name="SETrans">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>580</width>
+    <height>374</height>
+   </rect>
+  </property>
+  <property name="sizePolicy">
+   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+    <horstretch>0</horstretch>
+    <verstretch>0</verstretch>
+   </sizepolicy>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>580</width>
+    <height>374</height>
+   </size>
+  </property>
+  <property name="maximumSize">
+   <size>
+    <width>580</width>
+    <height>374</height>
+   </size>
+  </property>
+  <property name="windowTitle">
+   <string>SETrans</string>
+  </property>
+  <widget class="QTextBrowser" name="text_browser">
+   <property name="geometry">
+    <rect>
+     <x>280</x>
+     <y>130</y>
+     <width>260</width>
+     <height>100</height>
+    </rect>
+   </property>
+  </widget>
+  <widget class="QListView" name="list_view">
+   <property name="geometry">
+    <rect>
+     <x>40</x>
+     <y>60</y>
+     <width>200</width>
+     <height>240</height>
+    </rect>
+   </property>
+  </widget>
+  <widget class="QLabel" name="label_lv">
+   <property name="geometry">
+    <rect>
+     <x>40</x>
+     <y>30</y>
+     <width>60</width>
+     <height>20</height>
+    </rect>
+   </property>
+   <property name="font">
+    <font>
+     <bold>true</bold>
+    </font>
+   </property>
+   <property name="text">
+    <string>File List</string>
+   </property>
+  </widget>
+  <widget class="QPushButton" name="button_ls">
+   <property name="geometry">
+    <rect>
+     <x>40</x>
+     <y>320</y>
+     <width>75</width>
+     <height>24</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string>List</string>
+   </property>
+  </widget>
+  <widget class="QPushButton" name="button_get">
+   <property name="geometry">
+    <rect>
+     <x>165</x>
+     <y>320</y>
+     <width>75</width>
+     <height>24</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string>Get</string>
+   </property>
+  </widget>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
