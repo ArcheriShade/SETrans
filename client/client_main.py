@@ -1,5 +1,6 @@
 import sys
 import json
+import shutil
 from socket import *
 
 from Crypto.PublicKey import RSA
@@ -218,49 +219,140 @@ class CSETransWidget(QWidget):
         # 绑定button函数
         self.ui.button_ls.clicked.connect(self.getList)
         self.ui.button_get.clicked.connect(self.getFile)
+        self.ui.list_view.clicked.connect(self.clickList)
         # 未选择文件禁止get（前端）
         self.ui.button_get.setDisabled(True)
         # 禁止双击listView编辑
         self.ui.list_view.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.ui.list_view.clicked.connect(self.clickList)
 
     def getList(self):
+        """
+        获取文件列表
+        """
         global c_socket
-        ######################
-        # 发送加密的获取列表信号
-        # 获取加密列表的长度
-        # 发送OK
-        # 接收指定长度的加密数据
-        # 解密
-        # 获取列表（文件名+文件大小）
-        # 展示
-        pass
+        # 发送获取文件列表的信号
+        data = FILE_LS
+        cipher_data = self.encryptData(data)
+        c_socket.send(cipher_data)
+
+        # 接收服务端响应 - 加密数据长度
+        cipher_data = c_socket.recv(CHUNK_SIZE)
+        data = self.decryptData(cipher_data)
+        if data == -1:
+            self.sessBroken()
+            return -1
+        code = data[0].to_bytes(1, 'big')
+        if code == FILE_LEN:
+            pass
+        else:
+            self.sessBroken()
+            return -1
+        length = int.from_bytes(data[1:], 'big')
+
+        # 发送确认接收数据
+        data = FILE_RECV
+        cipher_data = self.encryptData(data)
+        c_socket.send(cipher_data)
+
+        # 根据数据长度，接收加密数据
+        cipher_data = self.recvEncData(length)
+        data = self.decryptData(cipher_data)
+        code = data[0].to_bytes(1, 'big')
+        if code == FILE_TRANS:
+            self.files_info = json.loads(data[1:])
+
+            # 测试超大文件
+            self.files_info.append(("big file.bin", 358548297728))
+
+            files_name = []
+            for info in self.files_info:
+                files_name.append(info[0])
+            self.slm.setStringList(files_name)
+            self.ui.list_view.setModel(self.slm)
+            self.ui.text_browser.setText("Successfully obtained the file list.")
+            # 未选中文件不允许get
+            self.ui.button_get.setDisabled(True)
+            return 0
+        else:
+            self.sessBroken()
+            return -1
 
     def getFile(self):
         global c_socket
-        ######################
-        # 发送加密的获取文件信号+要获取的文件名
-        # 获取加密文件的长度
-        # 发送OK
-        # 接收指定长度的加密数据
-        # 解密
-        # 获取文件
-        # 告知接收完成
-        pass
+        # 发送获取文件的信号
+        data = FILE_GET + self.selected.encode()
+        cipher_data = self.encryptData(data)
+        c_socket.send(cipher_data)
+
+        # 接收服务端响应 - 加密文件长度
+        cipher_data = c_socket.recv(CHUNK_SIZE)
+        data = self.decryptData(cipher_data)
+        if data == -1:
+            self.sessBroken()
+            return -1
+        code = data[0].to_bytes(1, 'big')
+        if code == FILE_LEN:
+            pass
+        elif code == FILE_NEXIS:
+            self.ui.text_browser.setText("File does not exist.")
+            return -1
+        else:
+            self.sessBroken()
+            return -1
+        length = int.from_bytes(data[1:], 'big')
+
+        # 发送确认接收数据
+        data = FILE_RECV
+        cipher_data = self.encryptData(data)
+        c_socket.send(cipher_data)
+
+        # 根据数据长度，接收加密数据
+        cipher_data = self.recvEncData(length)
+        data = self.decryptData(cipher_data)
+        code = data[0].to_bytes(1, 'big')
+        if code == FILE_TRANS:
+            file_data = data[1:]
+            with open(f"./filehub/{self.selected}", 'wb') as file_obj:
+                file_obj.write(file_data)
+            self.ui.text_browser.setText(f"Successfully obtained file '{self.selected}'.")
+            return 0
+        else:
+            self.sessBroken()
+            return -1
 
     def clickList(self, qModelIndex):
         """
         选择文件，判断磁盘空间是否足够，相应启用/关闭get button
         """
-        ###############################
-        pass
+        self.selected = self.files_info[qModelIndex.row()][0]
+        self.selected_size = self.files_info[qModelIndex.row()][1]
+
+        msg = ""
+        total_b, used_b, free_b = shutil.disk_usage("./filehub")
+        if len(self.selected) != 0:
+            msg = f"File name: {self.selected}\n"
+            msg += f"File size: {self.selected_size}\n"
+            if free_b > self.selected_size:
+                msg += "Sufficient disk space remaining."
+                self.ui.button_get.setEnabled(True)
+            else:
+                msg += "Insufficient disk space remaining."
+                self.ui.button_get.setDisabled(True)
+        self.ui.text_browser.setText(msg)
 
     def recvEncData(self, length):
         """
         获取指定长度的加密数据
         """
-        ############################
-        pass
+        global c_socket
+        chunks = []
+        recv_size = 0
+        while recv_size < length:
+            chunk = c_socket.recv(min(CHUNK_SIZE, length - recv_size))
+            chunks.append(chunk)
+            recv_size += len(chunk)
+        cipher_data = b''.join(chunks)
+        return cipher_data
 
     def encryptData(self, data):
         """

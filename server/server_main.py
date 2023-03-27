@@ -2,9 +2,10 @@ import os
 import re
 import sys
 import json
-import pymysql
+import logging
 from socketserver import BaseRequestHandler, ThreadingTCPServer
 
+import pymysql
 from Crypto.PublicKey import RSA
 from Crypto.Random import get_random_bytes
 from Crypto.Cipher import AES, PKCS1_OAEP
@@ -26,10 +27,15 @@ DB_CHARSET = "utf8mb4"                  # 数据库编码集
 class ClientHandler(BaseRequestHandler):
     def handle(self):
         global db_handler
-        # 每个client的连接句柄、会话密钥以及数据库游标
+        # 每个client的连接句柄、会话密钥、数据库游标以及日志句柄
         self.c_socket = self.request
         self.sess_key = get_random_bytes(16)
         self.db_cur = db_handler.cursor()
+        self.logger = None
+        self.enc_data = b''
+
+        self.loggerInit()
+
         # 建立安全信道
         if self.seSessInit() == 0:
             # 接收命令
@@ -37,10 +43,25 @@ class ClientHandler(BaseRequestHandler):
 
         self.c_socket.close()
 
+    def loggerInit(self):
+        """
+        对每一个client创建一个logger
+        """
+        c_ip = self.client_address[0]
+        c_port = self.client_address[1]
+        self.logger = logging.getLogger(f"{c_ip}_{c_port}")
+        self.logger.setLevel(logging.INFO)
+        fh = logging.FileHandler(f"./log/{c_ip}_{c_port}", mode='a', encoding='utf-8')
+        fh.setLevel(logging.INFO)
+        fmt = logging.Formatter("%(asctime)s|%(levelname)s|%(message)s")
+        fh.setFormatter(fmt)
+        self.logger.addHandler(fh)
+
     def seSessInit(self):
         """
         初始化安全信道
         """
+        self.logger.info("TCP连接成功")
         # 生成会话密钥的摘要
         digest = SHA256.new(self.sess_key)
 
@@ -57,6 +78,7 @@ class ClientHandler(BaseRequestHandler):
         # 将加密后的会话密钥和签名发送给client
         data = CONN_KEYSEND + en_sess_key + signature
         self.c_socket.send(data)
+        self.logger.info("会话密钥已发送")
 
         # 获取client响应
         code = self.c_socket.recv(CHUNK_SIZE)
@@ -64,6 +86,7 @@ class ClientHandler(BaseRequestHandler):
             self.c_socket.close()
             return -1
 
+        self.logger.info("安全信道初始化完成")
         return 0
 
     def recvCmd(self):
@@ -76,35 +99,84 @@ class ClientHandler(BaseRequestHandler):
             if data == -1:
                 self.sendError()
                 return -1
-
             code = data[0].to_bytes(1, 'big')
+            self.logger.info(f"收到信号：{hex(int.from_bytes(code, 'big'))}")
+
+            # 用户注册
             if code == ACON_SIGN:
                 username, password = self.aconInputCheck(data[1:])
                 if len(username) > 0 and len(password) > 0:
                     if self.signUp(username, password) < 0:
                         cipher_data = self.encryptData(ACON_NEXIS)
                         self.c_socket.send(cipher_data)
+                        self.logger.warning(f"用户注册：用户名 ’{username}‘ 已存在")
                     else:
                         cipher_data = self.encryptData(ACON_OK)
                         self.c_socket.send(cipher_data)
+                        self.logger.info(f"用户注册：用户 ’{username}‘ 注册成功")
                 else:
                     cipher_data = self.encryptData(ACON_FMATERR)
                     self.c_socket.send(cipher_data)
+                    self.logger.warning("用户注册：用户输入格式错误")
 
+            # 用户登录
             elif code == ACON_LOGIN:
                 username, password = self.aconInputCheck(data[1:])
                 if len(username) > 0 and len(password) > 0:
                     if self.login(username, password) < 0:
                         cipher_data = self.encryptData(ACON_NPERR)
                         self.c_socket.send(cipher_data)
+                        self.logger.warning("用户登录：用户名或密码错误")
                     else:
                         cipher_data = self.encryptData(ACON_OK)
                         self.c_socket.send(cipher_data)
+                        self.logger.info(f"用户登录：用户 ’{username}‘ 登录成功")
                 else:
                     cipher_data = self.encryptData(ACON_FMATERR)
                     self.c_socket.send(cipher_data)
+                    self.logger.warning("用户登录：用户输入格式错误")
 
-            ##############################
+            # 获取文件列表
+            elif code == FILE_LS:
+                files = os.listdir("./filehub")
+                files_info = []
+                for file in files:
+                    files_info.append((file, os.stat(f"./filehub/{file}").st_size))
+                ls_data = FILE_TRANS + json.dumps(files_info).encode()
+                # 加密列表信息
+                self.enc_data = self.encryptData(ls_data)
+                # 发送加密列表信息的长度
+                length = len(self.enc_data)
+                len_data = FILE_LEN + length.to_bytes(4, 'big')
+                cipher_len_data = self.encryptData(len_data)
+                self.c_socket.send(cipher_len_data)
+                self.logger.info("文件列表：发送加密的文件列表数据长度")
+
+            # 获取文件
+            elif code == FILE_GET:
+                files = os.listdir("./filehub")
+                file = data[1:].decode()
+                self.logger.info(f"文件获取：目标文件 ’{file}‘")
+                if file not in files:
+                    cipher_data = self.encryptData(FILE_NEXIS)
+                    self.c_socket.send(cipher_data)
+                    self.logger.warning("文件获取：目标文件不存在")
+                else:
+                    with open(f"./filehub/{file}", 'rb') as file_obj:
+                        file_data = FILE_TRANS + file_obj.read()
+                    # 加密文件
+                    self.enc_data = self.encryptData(file_data)
+                    # 发送加密文件的长度
+                    length = len(self.enc_data)
+                    len_data = FILE_LEN + length.to_bytes(4, 'big')
+                    cipher_len_data = self.encryptData(len_data)
+                    self.c_socket.send(cipher_len_data)
+                    self.logger.info("文件获取：发送加密的文件数据长度")
+
+            # 收到确认接受，发送客户端所需数据
+            elif code == FILE_RECV:
+                self.c_socket.send(self.enc_data)
+                self.logger.info("数据传输")
 
     def encryptData(self, data):
         """
@@ -140,6 +212,7 @@ class ClientHandler(BaseRequestHandler):
         """
         cipher_data = self.encryptData(CONN_CLOSE)
         self.c_socket.send(cipher_data)
+        self.logger.critical("发生错误，关闭连接")
         return -1
 
     def aconInputCheck(self, acon_input):
@@ -148,16 +221,18 @@ class ClientHandler(BaseRequestHandler):
         """
         data = acon_input.decode().split("/")
         if len(data) != 2:
+            self.logger.warning("账户操作：用户输入字段数量异常")
             return "", ""
         else:
             name, psw = data[0], data[1]
             name_check = re.match(r"^[a-zA-Z0-9_-]{4,16}$", name)
             psw_check = re.match(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[a-zA-Z\d]{8,16}$", psw)
             if name_check and psw_check:
-                print(name, psw) #【】
+                self.logger.info("账户操作：用户输入字段正常")
                 return name, psw
             else:
-                print(name, psw) #【】
+                self.logger.warning("账户操作：用户输入字段异常")
+                self.logger.warning(f"账户操作：用户输入 ’{name}/{psw}‘")
                 return "", ""
 
     def signUp(self, name, psw):

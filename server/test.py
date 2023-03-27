@@ -1,5 +1,7 @@
 import sys
 import re
+import os
+import json
 from socket import *
 
 import pymysql
@@ -101,27 +103,27 @@ from flag import *
 #
 #
 #
-登录
-salt = b""
-with open("./keys/saltlist", 'r') as file_obj:
-    line = file_obj.readline()
-    while line:
-        if not line.startswith(name + ":"):
-            line = file_obj.readline()
-            continue
-        else:
-            salt = bytes.fromhex(line.split(":")[1].strip())
-            break
-
-data = psw.encode() + salt
-psw_hash = SHA256.new(data).hexdigest()
-
-sql = "SELECT * FROM user WHERE username=%s and password=%s;"
-
-if cursor.execute(sql, (name, psw_hash)):
-    print("login successed")
-else:
-    print("username or password error")
+# 登录
+# salt = b""
+# with open("./keys/saltlist", 'r') as file_obj:
+#     line = file_obj.readline()
+#     while line:
+#         if not line.startswith(name + ":"):
+#             line = file_obj.readline()
+#             continue
+#         else:
+#             salt = bytes.fromhex(line.split(":")[1].strip())
+#             break
+#
+# data = psw.encode() + salt
+# psw_hash = SHA256.new(data).hexdigest()
+#
+# sql = "SELECT * FROM user WHERE username=%s and password=%s;"
+#
+# if cursor.execute(sql, (name, psw_hash)):
+#     print("login successed")
+# else:
+#     print("username or password error")
 
 
 
@@ -149,3 +151,30 @@ else:
 # db.commit()
 # db.close()
 
+
+# files = os.listdir("./filehub")
+# files_info = []
+# for file in files:
+#     files_info.append((file, os.stat(f"./filehub/{file}").st_size))
+# ls_data = FILE_TRANS + json.dumps(files_info).encode()
+# cipher_ls_data = ls_data
+# length = len(cipher_ls_data)
+# print(length)
+# len_data = FILE_LEN + length.to_bytes(4, 'big')
+# print(type(len_data), len(len_data), len_data)
+#
+# code = len_data[0]
+# length_c = int.from_bytes(len_data[1:], 'big')
+# print(code, length_c)
+
+code = int.from_bytes(b'\x44', 'big')
+s = hex(code)
+print(type(s), s)
+
+# files = os.listdir("./filehub")
+# file = b'33.txt'.decode()
+#
+# if file not in files:
+#     print("oops")
+# else:
+#     print("yeah")
