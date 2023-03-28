@@ -1,6 +1,7 @@
 import os
 import re
 import sys
+import time
 import json
 import logging
 from socketserver import BaseRequestHandler, ThreadingTCPServer
@@ -32,10 +33,16 @@ class ClientHandler(BaseRequestHandler):
         self.sess_key = get_random_bytes(16)
         self.db_cur = db_handler.cursor()
         self.logger = None
+        # 待传输数据信息
+        self.file_name = ""
         self.enc_data = b''
+        self.enc_data_len = 0
+        # 用户信息
+        self.username = ""
+        self.usertype = ""
 
+        # 初始化日志句柄
         self.loggerInit()
-
         # 建立安全信道
         if self.seSessInit() == 0:
             # 接收命令
@@ -146,8 +153,8 @@ class ClientHandler(BaseRequestHandler):
                 # 加密列表信息
                 self.enc_data = self.encryptData(ls_data)
                 # 发送加密列表信息的长度
-                length = len(self.enc_data)
-                len_data = FILE_LEN + length.to_bytes(4, 'big')
+                self.enc_data_len = len(self.enc_data)
+                len_data = FILE_LEN + self.enc_data_len.to_bytes(4, 'big')
                 cipher_len_data = self.encryptData(len_data)
                 self.c_socket.send(cipher_len_data)
                 self.logger.info("文件列表：发送加密的文件列表数据长度")
@@ -156,6 +163,7 @@ class ClientHandler(BaseRequestHandler):
             elif code == FILE_GET:
                 files = os.listdir("./filehub")
                 file = data[1:].decode()
+                self.file_name = file
                 self.logger.info(f"文件获取：目标文件 ’{file}‘")
                 if file not in files:
                     cipher_data = self.encryptData(FILE_NEXIS)
@@ -167,16 +175,27 @@ class ClientHandler(BaseRequestHandler):
                     # 加密文件
                     self.enc_data = self.encryptData(file_data)
                     # 发送加密文件的长度
-                    length = len(self.enc_data)
-                    len_data = FILE_LEN + length.to_bytes(4, 'big')
+                    self.enc_data_len = len(self.enc_data)
+                    len_data = FILE_LEN + self.enc_data_len.to_bytes(4, 'big')
                     cipher_len_data = self.encryptData(len_data)
                     self.c_socket.send(cipher_len_data)
                     self.logger.info("文件获取：发送加密的文件数据长度")
 
             # 收到确认接受，发送客户端所需数据
             elif code == FILE_RECV:
-                self.c_socket.send(self.enc_data)
-                self.logger.info("数据传输")
+                totalsent = 0
+                start_time = time.time()
+                while totalsent < self.enc_data_len:
+                    edge = min(CHUNK_SIZE, self.enc_data_len - totalsent)
+                    data = self.enc_data[totalsent:totalsent+edge]
+                    sent = self.c_socket.send(data)
+                    totalsent += sent
+                    if self.usertype != "VIP":
+                        # 价值10万的代码
+                        time.sleep(0.01)
+                end_time = time.time()
+                msg = f"数据传输：传输文件‘{self.file_name}’，用户‘{self.username}’，用户类型‘{self.usertype}’，用时{end_time - start_time}."
+                self.logger.info(msg)
 
     def encryptData(self, data):
         """
@@ -275,6 +294,10 @@ class ClientHandler(BaseRequestHandler):
         psw_hash = SHA256.new(psw.encode() + salt).hexdigest()
         sql = "SELECT * FROM user WHERE username=%s and password=%s;"
         if self.db_cur.execute(sql, (name, psw_hash)):
+            self.username = name
+            sql = "SELECT usertype FROM user WHERE username=%s;"
+            self.db_cur.execute(sql, (name))
+            self.usertype = self.db_cur.fetchone()[0]
             return 0
         else:
             return -1

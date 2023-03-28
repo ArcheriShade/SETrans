@@ -1,6 +1,7 @@
 import sys
 import json
 import shutil
+from threading import Thread
 from socket import *
 
 from Crypto.PublicKey import RSA
@@ -9,7 +10,7 @@ from Crypto.Signature import pkcs1_15
 from Crypto.Hash import SHA256
 
 from PySide6.QtWidgets import QApplication, QWidget, QAbstractItemView
-from PySide6.QtCore import QStringListModel
+from PySide6.QtCore import QStringListModel, QObject, Signal
 from ui_login import Ui_Login
 from ui_setrans import Ui_SETrans
 
@@ -278,7 +279,13 @@ class CSETransWidget(QWidget):
             return -1
 
     def getFile(self):
+        """
+        发送获取文件信号及目标文件名
+        """
         global c_socket
+        self.ui.text_browser.setText(f"Getting file: {self.selected}")
+        self.ui.button_ls.setDisabled(True)
+        self.ui.button_get.setDisabled(True)
         # 发送获取文件的信号
         data = FILE_GET + self.selected.encode()
         cipher_data = self.encryptData(data)
@@ -315,10 +322,13 @@ class CSETransWidget(QWidget):
             with open(f"./filehub/{self.selected}", 'wb') as file_obj:
                 file_obj.write(file_data)
             self.ui.text_browser.setText(f"Successfully obtained file '{self.selected}'.")
+            self.ui.button_ls.setEnabled(True)
+            self.ui.button_get.setEnabled(True)
             return 0
         else:
             self.sessBroken()
             return -1
+
 
     def clickList(self, qModelIndex):
         """
